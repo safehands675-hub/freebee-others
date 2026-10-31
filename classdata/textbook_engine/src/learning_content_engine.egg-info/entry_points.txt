@@ -1,0 +1,3 @@
+[console_scripts]
+content-chat = textbook_engine.chat:main
+content-engine = textbook_engine.cli:main

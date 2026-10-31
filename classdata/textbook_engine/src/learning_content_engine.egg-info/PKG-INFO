@@ -1,0 +1,683 @@
+Metadata-Version: 2.4
+Name: learning-content-engine
+Version: 0.1.0
+Summary: Local ingestion and annotation pipeline for educational content
+Requires-Python: <3.15,>=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: google-genai<2,>=1.55
+Requires-Dist: PyMuPDF<2,>=1.24
+Requires-Dist: Pillow>=10.0
+Provides-Extra: detection
+Requires-Dist: libreyolo<2,>=1.6; extra == "detection"
+
+# Learning Content Engine
+
+A Python project for importing, processing, and serving educational
+content and media as traceable, reviewed learning assets. Textbook PDFs are the
+first content source, not the limit: the engine is intended to support
+standalone images, SVG diagrams, and structured learning data as well.
+
+The production direction is an ASP.NET Core modular monolith with a Python
+ingestion worker, PostgreSQL, Gemini-assisted one-time textbook understanding,
+and Groq for normal answer generation. This is a target, not the current
+implementation; see the [architecture and implementation plan](./roadmap.md).
+The rest of this README documents the existing Python prototype and its
+optional content/annotation utilities unless a section explicitly says it is
+planned.
+
+The student-facing UI is a separate project. This engine accepts content,
+questions, or submitted answers from its callers and returns structured,
+grounded results. It is also separate from the Manim animation engine in
+`AINEWPROJ`. Project documentation, source code, configuration, imported
+assets, indexes, and generated data belong under
+`AINEWPROJ/classdata/textbook_engine/`. The current SCERT PDFs remain in the
+existing `AINEWPROJ/classdata/Telangana_SCERT_Textbooks/` corpus. The folder
+name `textbook_engine` is retained for the project path; it does not restrict
+the engine to textbook-only content.
+
+## Content types and local data
+
+The planned content model is generic: books and chapters are one way to
+organize material, while a general source, document, page, media asset,
+passage, annotation, activity, and citation can represent other educational
+content too.
+
+| Input | Initial/later handling |
+|---|---|
+| PDF textbooks and handouts | PyMuPDF extracts page text and renders pages during import; `extract-images` exports embedded image assets with page-placement references. |
+| Raster images (PNG, JPEG, and similar) | Keep the source image, record its metadata, propose object boxes, and produce reviewed annotation data. |
+| SVG diagrams and illustrations | Preserve the original vector asset and its text/shape data where useful. Rasterize a safe copy for detector input or preview when needed; choose and test the rasterization dependency during implementation. |
+| Structured JSON and text | Validate and import content, labels, activities, and references using versioned schemas. |
+
+Keep all project-managed imported assets, manifests, extracted text, crops,
+annotation JSON, indexes, previews, and generated activity data under
+`classdata/textbook_engine/data/`. Do not write annotations into or replace
+source PDFs or images. The existing downloaded PDF collection is already
+inside the broader `classdata/` workspace; refer to those files by path and
+checksum rather than copying the entire corpus. Import other standalone assets
+into the project data area when they are approved for use.
+
+The current Python prototype does not use PostgreSQL. In the target
+architecture, PostgreSQL indexes metadata and page text but does not replace
+the original PDFs or versioned chapter packages.
+
+Keep source attribution and permissions with every content source. Do not
+publish or redistribute textbook pages, images, SVGs, or derived assets unless
+their use permits it. Treat imported SVG as untrusted input: do not execute
+scripts, load external references, or embed unsafe SVG markup in a client.
+
+The available corpus currently includes English-medium PDFs for Classes 1–8.
+Class 9 currently has only a Telugu-medium folder, so its English-medium books
+cannot be processed until they are added to the corpus.
+
+## Goal and first release
+
+Given a selected source asset (starting with a PDF and selected page range),
+the first useful release should:
+
+1. Identify and validate a source asset and its metadata.
+2. Extract or safely render its text and visual content, preserving a
+   reference to the original file/page/region.
+3. Retrieve the relevant text and page/image when a caller submits a question.
+4. Use image understanding only when that question needs visual context;
+   perform object localization only when the response must point to a region.
+5. Save any generated locations as unverified candidates and require human
+   review before they can be used as answer keys or student highlights.
+6. Return grounded answers, citations, and only approved annotation references
+   to a separate caller/UI.
+
+The current release includes the offline processing pipeline and a local
+Groq-backed student chat demo. It is a development UI for testing textbook
+retrieval, grade-adjusted explanations, citations, and question-triggered page
+image understanding; it is not the separate production student UI or a
+multi-user service.
+
+### Local Groq chat demo
+
+The demo serves a local browser interface for Classes 1–8. It retrieves
+textbook pages from the consolidated extraction index, adjusts its tutoring
+instructions for the selected class, and includes page citations. If a
+question asks about a picture, select its book and printed page first; the page
+image is then sent to Groq for visual context. This demo does not draw or
+verify object locations, and model descriptions must not be treated as
+approved circles, labels, or answer keys. You can mention the number printed
+on a page in your question. The engine maps that printed number to a PDF page
+using a local OCR index; it never assumes that printed page 3 is PDF page 3.
+If a page reference does not uniquely identify a book, choose the exact title
+in the Textbook selector. The engine sends a selected page image to Groq when
+the question needs visual context or its text could not be recovered. OCR
+matches are confidence-filtered; uncertain and duplicate numbers are marked
+for review instead of guessed.
+With a textbook selected, asking "Explain chapter 1" supplies the detected
+chapter's full extracted text to the tutor rather than relying on keyword
+matching across a few pages.
+
+### Prepared JSON chapters and images
+
+The target versioned book package and page-record contract are documented in
+[`HOW_TO_ADD_BOOK_DATA.md`](./HOW_TO_ADD_BOOK_DATA.md). The target format is
+planned and is not yet loaded by the current prototype.
+
+The current chat catalog also reads the page-oriented schema 2.0 from
+`data/prepared_books/class_*/*/chapter_*.json`. It groups chapter files using
+their `source_book` metadata and uses each page's printed/PDF provenance,
+extracted text, page explanation, visual descriptions, and optional image.
+This prototype format does not require `book.json`, an OCR pipeline run, or a
+separate printed-page index. Restart the chat server after adding or changing
+files. A referenced page image must exist under `data/` for the prototype to
+send it to Groq; without it, text and supplied descriptions remain usable,
+but visual claims are not confirmed.
+
+The prototype also supports a separate manually curated `book.json` package.
+For example, put it under `data/prepared_books/class_01/english/`:
+
+```text
+book.json
+chapters/unit_01.json
+images/class01_english_unit01_img001.png
+```
+
+`book.json` identifies the book and lists its chapter number, ID, and
+chapter-JSON path. Each chapter JSON contains its original text, explanation,
+questions, and image records. Use each image record's `image_id` as the stable
+reference in section/question `image_ids`; use `file` for a path relative to
+the book folder, for example `images/class01_english_unit01_img001.png`.
+Question-to-image links let the tutor select the relevant original image
+instead of attaching every image. The chat validates paths and references,
+includes all supplied descriptions as text, and sends up to four selected
+images to Groq. Groq receives image bytes through the server-side API request;
+it cannot open a local file path or resolve an ID by itself.
+
+The minimum `book.json` shape is:
+
+```json
+{
+  "schema_version": 1,
+  "book_id": "class02_science",
+  "class": 2,
+  "subject": "Science",
+  "title": "Science (Prepared Content)",
+  "chapters": [
+    {
+      "chapter_id": "class02_science_chapter01",
+      "number": 1,
+      "file": "chapters/chapter_01.json"
+    }
+  ]
+}
+```
+
+Chapter JSON uses `schema_version`, `book_id`, `chapter_id`, `number`,
+`title`, `summary`, `sections`, and `images`. A section can provide
+`source_text`, `explanation`, `key_terms`, `key_facts`, `questions`, and
+`image_ids`. Each image record needs a unique `image_id` and relative `file`;
+`description`, `labels`, and `source_pdf_page` provide useful grounding and
+citations. Every ID referenced by a section or question must exist in that
+chapter's `images` list.
+
+Prepared books are discovered when the chat server starts. Restart the server
+after adding or changing package files. The current Class 1 English Unit 1
+package is included as a working example. Its attached image records do not
+yet include AI descriptions, so those original images are sent directly to
+Groq when relevant; add reviewed descriptions and labels to improve retrieval
+and answers.
+
+Install Tesseract OCR for Windows and ensure `tesseract.exe` is on `PATH` (or
+set `TESSERACT_CMD` to its full path). For example, install with WinGet:
+
+```powershell
+winget install --id tesseract-ocr.tesseract --exact
+```
+
+Restart PowerShell after installation. Process a newly uploaded PDF with one
+command:
+
+```powershell
+content-engine process-pdf .\path\to\textbook.pdf
+```
+
+The pipeline preserves the original PDF and automatically imports and renders
+all pages, extracts embedded images and text, applies local OCR to sparse or
+broken-text pages, builds the printed-page index, and makes a completed upload
+discoverable to the chat catalog. It can infer a class from the PDF filename
+or first pages; use `--class-number 1` through `8` only when the PDF contains
+no readable class information. Reprocessing the same PDF resumes or returns
+its existing package instead of creating duplicates.
+
+### Process one chapter on demand
+
+Chapter extraction and explanation are a separate, explicitly invoked command.
+This remains an optional PDF-based workflow; manually prepared JSON packages
+are consumed directly and do not need this command. It does not run when the
+application starts, and it does not perform OCR, printed-page detection, or
+page-number mapping:
+
+```powershell
+content-engine process-chapter .\path\to\textbook.pdf --chapter 1
+```
+
+The command recognizes explicit `CHAPTER`, `UNIT`, or `LESSON` headings and
+uses the next numbered heading of the same kind as the end boundary. If it
+cannot identify both boundaries confidently, it reports an error rather than
+guessing. It extracts only that chapter's text and local images, then sends
+the extracted text to Gemini in manageable chunks for structured JSON
+generation. The original extracted text is retained separately in the output,
+and the generated chapter records its model and prompt-version provenance.
+This first Gemini integration is text-only: images are saved and referenced,
+but their visual contents and labels are not sent to or described by Gemini.
+Set `GEMINI_API_KEY` in the project `.env`; the default model is
+`gemini-3.1-flash-lite`, configurable with `GEMINI_MODEL` or `--model`.
+
+To process another chapter, change the chapter number:
+
+```powershell
+content-engine process-chapter .\path\to\textbook.pdf --chapter 2
+```
+
+The default output is saved under
+`data/processed/class_<number>/<book_subject>/chapter_<number>/` with
+`chapter.json`, `extracted_text.txt`, `processing_report.json`, and an `images/`
+directory. Repeat runs update the same named files instead of creating
+numbered duplicates. The command sends textbook text to Gemini only when
+explicitly run. Set `--output-dir` to choose another output root.
+
+The pipeline selects Tesseract language data from the source filename (for
+example, `Telugu` selects `tel`). Install the matching Tesseract traineddata
+for each script the engine must OCR. If that language is not installed, the
+engine preserves native PDF text and flags unreadable pages for visual review;
+it does not substitute English OCR for another script.
+
+Printed-page recognition uses OCR evidence at lower-corner badges. If at least
+three confident OCR readings agree on a PDF-to-printed-page offset, unreadable
+numbers can be resolved from that sequence. Other footer digits are ignored;
+unmatched or conflicting pages remain marked for review in
+`printed_page_index.json`. Review low-confidence results before relying on
+them. This pipeline organizes and retrieves PDF evidence for the local chat;
+it does not guarantee perfect OCR or verified object coordinates, image
+labels, or circles.
+Class 9 English-medium PDFs are not available in the current corpus.
+
+The Groq and Gemini API keys are used only by the local server-side Python
+process. From `classdata/textbook_engine/`, copy `.env.example` to `.env` and
+set the keys for the features you use:
+
+```text
+GROQ_API_KEY=your_groq_api_key
+GEMINI_API_KEY=your_google_gemini_api_key
+GEMINI_MODEL=gemini-3.1-flash-lite
+```
+
+Never put either key in browser code or commit `.env`. The key is ignored by Git.
+The demo sends the question, recent chat context, retrieved text excerpts, and
+the selected textbook page image when its text is unreadable or the question
+asks about a picture, to Groq. Do not
+enter student names, school details, or other personal information. Review
+Groq's current terms and your textbook usage permissions before using real
+student data or distributing content.
+
+Start the local server and open the printed address (normally
+`http://127.0.0.1:8765`):
+
+```powershell
+python -m pip install -e .
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Edit .env and set GROQ_API_KEY before starting the chat demo.
+content-chat
+```
+
+The default model is `qwen/qwen3.8-27b`; override it using `GROQ_MODEL` in
+`.env` if needed. `process-chapter` uses Gemini and requires `GEMINI_API_KEY`.
+The service binds only to loopback. Use `Ctrl+C` to stop it.
+
+## Product direction: a text-led, image-aware learning experience
+
+The **student UI is a separate project** and is not part of this engine. This
+project processes and indexes approved learning content, then provides a
+backend interface for that UI: it accepts a question, selected content/context,
+or activity response and returns structured answers, citations, feedback, and
+references to approved image annotations. The UI owns screens, student input,
+image rendering, tap handling, and display of the response. Text and images
+must refer to the same source, page/asset, concepts, and approved annotation
+records.
+
+```text
+Separate student UI
+  ├── sends question, book/context, or activity answer
+  v
+Learning content engine backend
+  ├── retrieves approved source passages and annotations
+  ├── generates/checks a content-grounded response
+  └── returns answer, citations, feedback, and approved figure/object IDs
+  |
+  └── response -> separate student UI renders text/image/highlights
+```
+
+### Student interaction modes
+
+- **Ask and explain:** a student types a question. The service retrieves
+  relevant passages from approved sources and returns a concise explanation
+  with source/page references. A text-generation model may help phrase the
+  answer, but it must be grounded in retrieved content; unsupported questions
+  should be identified as not covered rather than answered from a guess.
+- **Ask about a picture (planned):** retrieve the relevant textbook image when
+  a question needs visual context, then ask a vision-capable model to explain
+  that image alongside the related page text. The separate UI sends the source
+  and page references; a model-generated location is not considered verified.
+- **Point it out:** when an explanation refers to an object, the response may
+  include a highlight reference only if it resolves to an approved annotation
+  on the displayed figure. The separate UI draws a temporary circle, box, or
+  outline over the original image. Generated text must never invent image
+  coordinates.
+- **Learn and practise:** show labels and explanations in learning mode; hide
+  them in practice mode. The student can tap an object, reveal a hint, or
+  request the correct region. Use an approved box as a first tap target; add
+  masks only if actual object shapes are needed and the project later supports
+  them.
+- **Answer activities:** create fill-in-the-blank, multiple-choice,
+  short-answer, matching, label-the-picture, object-finding, and carefully
+  verified counting exercises. Each activity stores its answer rule,
+  feedback/hints, language, and references to source passages or approved
+  object IDs. An AI-drafted question is not automatically an approved
+  assessment.
+
+An explanation response should return text plus references the client can
+resolve, rather than model-generated geometry:
+
+```json
+{
+  "answer": "A tree gives the bird a place to rest.",
+  "citations": [
+    {
+      "book_id": "book_001",
+      "pdf_page": 12,
+      "text_ref": "passage_012_03"
+    }
+  ],
+  "highlights": [
+    {
+      "figure_id": "figure_012_01",
+      "annotation_id": "object_004",
+      "style": "outline"
+    }
+  ]
+}
+```
+
+This is an illustrative future API shape, not an implemented contract. The
+backend must verify that the cited passages and annotation IDs belong to the
+selected content and are approved before returning them. The client obtains
+the actual annotation geometry from the approved figure data and draws the
+overlay on that figure.
+
+### Content and runtime boundaries
+
+- **Processing pipeline:** format-specific adapters ingest content. PyMuPDF
+  handles PDFs; raster-image handling and safe SVG parsing/rendering provide
+  additional asset inputs. LibreYOLO proposes candidate boxes for raster
+  images; Pillow renders raster review previews; JSON stores provenance,
+  annotations, and activity definitions.
+- **Review/publishing:** only reviewed content is published to student
+  experiences. Keep candidate, corrected, and approved records distinct.
+- **Content API:** later serves approved text, source/page/figure metadata, assets,
+  activity definitions, and citations. Keep all project-managed source files
+  and derived assets under `textbook_engine/data/`, with stable references in
+  metadata.
+- **Learning runtime:** later evaluates deterministic activity rules,
+  checks submitted answers, and returns feedback to the separate UI. Text
+  generation can draft explanations, hints, or question wording from approved
+  content; it does not decide visual locations or silently become the
+  assessment answer key.
+- **Student UI (separate project):** the production UI owns presentation,
+  student interaction, and accessibility, and calls the engine backend. This
+  project has a small local-only browser demo for development; it is not the
+  production UI or its integration contract.
+- **School integration:** use a separate adapter boundary for LMS/school
+  systems. Evaluate standards such as LTI 1.3 for launch/identity and
+  OneRoster or applicable LTI Advantage services for roster/grade exchange
+  only when a target school requires them. Do not assume a particular SIS,
+  LMS, or integration is selected. A later teacher experience can map learning
+  content to the school's curriculum, assign activities to classes,
+  and review class-level progress. Treat teacher, student, and administrator
+  permissions separately.
+- **Student privacy:** begin without collecting student identity. Before
+  roster, account, or progress integrations, define minimum data collection,
+  consent, retention/deletion, access controls, and school responsibilities.
+
+## Chosen first-version stack
+
+The current implementation uses these tools for the PDF-and-raster
+vertical slice:
+
+| Tool | First-version responsibility | Boundary |
+|---|---|---|
+| **PyMuPDF** (`pymupdf`) | Open PDFs, inspect pages, extract text and embedded images where suitable, and render pages to raster images. | Preserve source PDF page numbers and image/crop provenance. Scanned pages may need a later OCR stage. |
+| **LibreYOLO** | Optional local candidate detector returning class labels, bounding boxes, and confidence scores. | Install the optional `detection` extra. Its weights/classes and performance on the actual content must be measured; scores do not verify detections. |
+| **Pillow** (`PIL`) | Crop/save raster assets and render review previews with boxes, outlines where available, and labels. | Keep an unmodified source render; annotations are overlays or derived preview files. |
+| **JSON** | Store manifests, image dimensions, source references, candidate annotations, review state, and activity references. | Use a versioned schema and validate paths and normalized coordinates. Keep image bytes out of JSON. |
+
+PyMuPDF is the PDF adapter, not the universal content reader. PDF text is
+extracted per page during import; run `extract-images` to export embedded
+raster image streams once per unique byte sequence and record their page
+placements. This does not extract vector drawings as separate images; the full
+rendered page remains available for those. Standalone SVG
+ingestion currently accepts a restricted, non-executable subset and records
+metadata; it does not yet rasterize SVG for detection or previews. Structured
+content receives JSON syntax validation. Keep format adapters behind a common
+asset interface.
+
+The current preview uses **bounding boxes**, not segmentation masks. Do not
+describe a box as an exact object outline. If boxes prove insufficient for
+touch selection, evaluate a separate segmentation stage in a later phase.
+LibreYOLO is an optional detector wired into the local pipeline, but its
+predictions remain unverified. PostgreSQL, OCR, and the production student UI
+are not part of this prototype. Groq is used by the local chat demo for text
+answers and selected-page vision context, but its descriptions do not verify
+object locations.
+
+## Processing pipeline
+
+```text
+Source asset (PDF / raster image / SVG / text or JSON)
+  -> format-specific safe import and inventory
+  -> normalized page text/media and provenance
+  -> optional embedded-image extraction linked to source pages
+  -> question-time retrieval and selected-page image analysis (local demo)
+  -> optional detector suggestions and Pillow previews
+  -> visual and human verification
+  -> approved annotations and activity data
+  -> response to a separate UI/client
+```
+
+| Step | Component | Responsibility |
+|---|---|---|
+| 1 | Source adapters | Import PDFs (PyMuPDF), raster images, SVG, and structured text/JSON; retain source references. |
+| 2 | PDF image extraction | Export embedded image bytes once per unique image and link every occurrence to its PDF page and position. |
+| 3 | Question-time image understanding (local demo) | For a picture question, analyze the selected/retrieved page image; do not pre-label every image or treat the generated description as verified localization. |
+| 4 | Candidate object detector (LibreYOLO) | Optionally propose supported object classes, locations, and confidence scores for raster images. |
+| 5 | Annotation and preview (Pillow) | Save candidate coordinates and render raster previews with boxes and labels for visual review. |
+| 6 | JSON generator and validator | Save versioned candidate annotations, source references, and review state; validate coordinates and asset paths. |
+| 7 | Verification | Accept, correct, reject, or flag model proposals; prevent unreviewed labels from becoming answer keys. |
+| 8 | Activity and response service | Build activities from approved content and return grounded answers, citations, feedback, and approved annotation references to callers. |
+
+The optional LibreYOLO adapter produces **candidate** annotations, not verified
+labels. Before processing a batch, check the actual weights, supported classes,
+license, runtime, and results on representative images. If a requested label
+such as “bird” or “house” is unsupported or unreliable, report it for review;
+do not substitute a guessed box. Detection confidence is a review signal, not
+proof that an annotation is correct.
+
+## Current Python prototype layout
+
+```text
+classdata/
+  Telangana_SCERT_Textbooks/       # Existing, read-only source PDFs
+  textbook_engine/
+    README.md                      # This overview and operating principles
+    roadmap.md                     # Phases, dependencies, and acceptance checks
+    pyproject.toml                 # Current Python package/dependencies
+    src/textbook_engine/
+      cli.py
+      sources/
+        base.py
+        pdf.py
+        raster_image.py
+        svg.py
+      detect.py
+      annotate.py
+      validate.py
+      activities.py
+      storage/
+    tests/
+    schemas/
+    data/
+      sources/                     # Approved project-managed source assets
+      extracted/                   # Page renders, text, and crops
+      annotations/                 # Candidate and approved JSON
+      activities/                  # Validated activity JSON
+      indexes/                     # Rebuildable local search/index data
+      previews/                    # Derived review images
+```
+
+This describes the Python prototype, not the target production layout. The
+current implementation is in `src/textbook_engine/core.py` and
+`src/textbook_engine/cli.py`. Keep project-managed data beneath
+`textbook_engine/data/`. The target production components and their
+implementation sequence are in [roadmap.md](./roadmap.md); do not infer that
+the current package layout already contains those planned services. Keep
+LibreYOLO and its model weights isolated from PDF/JSON validation so basic
+inspection and tests do not require downloading detector weights.
+
+## Output package
+
+Create one package per content source and processing version. For example:
+
+```text
+data/
+  sources/
+    Class_01_English_Medium_English/
+      manifest.json
+      pages/
+        page_001.png
+      figures/
+        page_012_figure_001.png
+    standalone_assets/
+      classroom_diagram.svg
+  annotations/
+    figure_012_figure_001.json
+    classroom_diagram.json
+  activities/
+    chapter_01.json
+  review/
+    annotations.jsonl
+  indexes/
+  previews/
+```
+
+Large raster images and model weights should not be embedded in JSON. JSON
+should refer to actual files using package-relative paths. A validator must
+check that every referenced file exists before declaring a package complete.
+Generated data should not be committed by default; source documents, artwork,
+extracted images, and secrets need deliberate Git and distribution policies.
+
+## Annotation data contract
+
+The schema should be versioned and validated before it is consumed. A minimal
+candidate record could look like this:
+
+```json
+{
+  "schema_version": "1.0",
+  "source": {
+    "source_id": "source_001",
+    "type": "pdf",
+    "path": "sources/Class_01_English_Medium_English.pdf",
+    "sha256": "computed-from-the-source-file",
+    "page": 12
+  },
+  "image": {
+    "path": "figures/page_012_figure_001.png",
+    "width": 1200,
+    "height": 800
+  },
+  "annotations": [
+    {
+      "object_id": "object_001",
+      "label": "house",
+      "bounding_box": {
+        "x": 0.12,
+        "y": 0.25,
+        "width": 0.3,
+        "height": 0.35
+      },
+      "segmentation_mask": null,
+      "confidence": 0.91,
+      "status": "needs_review",
+      "verified_by": null,
+      "model": {
+        "name": "LibreYOLO",
+        "version": "model-version"
+      }
+    }
+  ]
+}
+```
+
+The numbers above are illustrative only. Coordinates must come from model
+output or human annotation on the actual image. Define `x` and `y` as the
+normalized top-left position, with width and height normalized to the image
+dimensions, origin at the top-left, and values in `[0, 1]`. Keep the source
+page, crop dimensions, and crop-to-page transform so overlays can be mapped
+back to the right image. Never generate a student answer key from
+`needs_review` annotations.
+
+## Storage and model boundaries
+
+- **First milestone:** files plus versioned JSON are the source of truth. This
+  keeps local experiments usable without a running database.
+- **Later:** add PostgreSQL for book/page/figure/annotation metadata and review
+  state. Keep large page images, SVGs, and crops under project data or object
+  storage and reference them from the database.
+- **Search, if needed:** evaluate PostgreSQL full-text search first; add vector
+  search only when there is a demonstrated retrieval use case.
+- **LibreYOLO:** local candidate detection only. Record the model/weights
+  identity and output; send candidates through visual review before they can
+  define an answer key.
+- **Groq in the local demo:** generates age-adjusted explanations from
+  retrieved excerpts and can describe a selected page image for picture
+  questions. It is not a verified detector and must not invent object
+  locations, citations, or answer keys.
+- **Future database/API:** add only after local JSON processing and validation
+  have a stable schema and a demonstrated need.
+- Before distributing extracted textbook images or sending content to an
+  external service, check reproduction rights, service terms, privacy needs,
+  and school policy.
+
+## How to use this project today
+
+Create an environment and install the base project from this directory:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+```
+
+Install the optional detector only when you are ready to use LibreYOLO:
+
+```powershell
+python -m pip install -e ".[detection]"
+```
+
+Import a selected PDF page range, inspect the generated manifest, then edit
+the page's annotation JSON to add **measured** normalized bounding boxes:
+
+```powershell
+python -m textbook_engine ingest ..\Telangana_SCERT_Textbooks\Class_01\English_Medium\Class_01_English_Medium_Mathematics.pdf --pages 1-2
+$sourceId = "paste-source-id-from-the-ingest-manifest"
+$manifest = ".\data\sources\$sourceId\manifest.json"
+python -m textbook_engine extract-images $manifest
+$annotations = ".\data\sources\$sourceId\annotations\page_0001.json"
+python -m textbook_engine detect $annotations --weights LibreYOLO9t.pt --labels tree,bird,house
+python -m textbook_engine validate $annotations
+python -m textbook_engine preview $annotations --output .\data\previews\page_0001.png
+```
+
+PDF import already writes selectable text per page and a page render. Run
+`extract-images` on the imported PDF manifest to export embedded image streams
+under `extracted/images/`; the manifest records each image's page placements.
+This extraction is independent of object recognition. The local chat demo
+retrieves relevant text and sends a page image to Groq only when a picture
+question is associated with a selected/retrieved page. This visual analysis
+describes the page; it does not produce verified object coordinates.
+
+To publish an annotation, set its status to `approved` and supply a non-empty
+`verified_by` reviewer value. Coordinates must be measured on that image;
+LibreYOLO's predictions remain `needs_review` and are not accepted as verified.
+
+Other supported inputs are raster images, a restricted SVG subset, UTF-8 text,
+and JSON. `content-engine --help` lists the commands. The PDF downloader at
+`classdata/download_ts_textbooks.py` remains a separate tool and only downloads
+source PDFs.
+
+Current development status and exact limitations are tracked in
+[PROGRESS.md](PROGRESS.md); future architecture and phases are in
+[roadmap.md](roadmap.md).
+
+## Success criteria
+
+The pipeline is useful only when the result is both traceable and visually
+correct. Before a pilot is considered ready:
+
+- An asset can be traced to its source path and checksum; PDF-derived crops
+  retain their source page mapping.
+- Every annotation coordinate is within image bounds and renders over the
+  intended object.
+- Missing images, malformed JSON, invalid boxes, and broken asset paths fail
+  validation with actionable errors.
+- Unreviewed or rejected detections cannot silently become correct answers.
+- Student hit testing uses the approved object region, not a model-generated
+  label alone.
+- Reviewers can identify and correct missed, duplicated, overlapping, or
+  mislabeled objects.
+- The pilot is measured on real pages in each target language before expanding
+  to the full textbook collection.

@@ -1,0 +1,6 @@
+google-genai<2,>=1.55
+PyMuPDF<2,>=1.24
+Pillow>=10.0
+
+[detection]
+libreyolo<2,>=1.6

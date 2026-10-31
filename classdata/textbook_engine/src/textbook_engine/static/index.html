@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f8ff">
+  <title>Study Buddy | Learning Content Engine</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Study Buddy home">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span><strong>Study Buddy</strong><small>Your textbook helper</small></span>
+      </a>
+
+      <section class="setup-card" aria-labelledby="setup-title">
+        <div class="section-heading">
+          <span class="eyebrow">LET'S LEARN</span>
+          <h1 id="setup-title">Choose your class</h1>
+        </div>
+        <label for="class-select">I am studying in</label>
+        <select id="class-select" aria-label="Choose class"></select>
+        <label for="book-select">Your textbook</label>
+        <select id="book-select" aria-label="Choose textbook">
+          <option value="">Choose a textbook</option>
+        </select>
+        <div class="page-row">
+          <label for="page-input">Printed page number <span>(optional)</span></label>
+          <input id="page-input" type="number" min="1" max="999" inputmode="numeric" placeholder="For example, 3">
+        </div>
+        <button id="process-book-button" class="process-book-button" type="button" hidden>
+          Process selected textbook
+        </button>
+        <p id="process-status" class="process-status" role="status" hidden></p>
+        <p id="book-warning" class="book-warning" hidden></p>
+      </section>
+
+      <section class="tips-card">
+        <div class="tips-icon" aria-hidden="true">💡</div>
+        <div>
+          <h2>Ask anything</h2>
+          <p>Choose your book and the number printed on its page. Ask about a lesson or picture.</p>
+        </div>
+      </section>
+
+      <div class="sidebar-bottom">
+        <div class="privacy-note">
+          <span aria-hidden="true">🔒</span>
+          <p>Your question is sent to Groq to create a reply. Please don't share your name, school, or other personal information.</p>
+        </div>
+        <div id="connection-status" class="connection-status" role="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Checking the tutor…</span>
+        </div>
+      </div>
+    </aside>
+
+    <section class="chat-panel" aria-label="Chat with your study buddy">
+      <header class="chat-header">
+        <div class="tutor-avatar" aria-hidden="true">✦</div>
+        <div class="tutor-heading">
+          <strong>Your Study Buddy</strong>
+          <span id="class-context">A friendly helper for your lessons</span>
+        </div>
+        <button id="clear-button" class="clear-button" type="button" title="Start a new chat">
+          <span aria-hidden="true">↻</span><span>New chat</span>
+        </button>
+      </header>
+
+      <div id="message-list" class="message-list" aria-live="polite" aria-relevant="additions text">
+        <article class="message assistant-message welcome-message">
+          <div class="message-avatar" aria-hidden="true">✦</div>
+          <div class="message-content">
+            <span class="message-author">Study Buddy</span>
+            <div class="bubble">
+              <p>Hi there! 👋 I can help explain things from your textbooks in a way that fits your class.</p>
+              <p>What are you curious about today?</p>
+            </div>
+          </div>
+        </article>
+        <div class="suggestions" aria-label="Example questions">
+          <button type="button" class="suggestion">Explain a tricky word</button>
+          <button type="button" class="suggestion">Help me understand a lesson</button>
+          <button type="button" class="suggestion">What is in a picture?</button>
+        </div>
+      </div>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+      <form id="chat-form" class="composer">
+        <label class="sr-only" for="question-input">Type your question</label>
+        <textarea id="question-input" rows="1" maxlength="1000" placeholder="Ask your question…" required></textarea>
+        <button id="send-button" type="submit" aria-label="Send question">
+          <span class="send-label">Ask</span><span aria-hidden="true">➜</span>
+        </button>
+        <div class="composer-hint">Press Enter to ask · Shift + Enter for a new line</div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
